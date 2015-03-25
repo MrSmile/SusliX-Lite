@@ -2,6 +2,10 @@
 #include <assert.h>
 #include <vector>
 
+float CheckSolveImpulse(ContactJoint &joint);
+float CheckSolveDisplacingImpulse(ContactJoint &joint);
+void FastSolveJoints(ContactJoint *joints, int nJoints, int nIter, int nDisp);
+
 struct Solver
 {
   Solver()
@@ -28,11 +32,14 @@ struct Solver
   }
   void SolveJoints(int contactIterationsCount, int penetrationIterationsCount)
   {
+    FastSolveJoints(contactJoints.data(), contactJoints.size(), contactIterationsCount, penetrationIterationsCount);  return;
+
     for (int iterationIndex = 0; iterationIndex < contactIterationsCount; iterationIndex++)
     {
       for (size_t jointIndex = 0; jointIndex < contactJoints.size(); jointIndex++)
       {
         contactJoints[jointIndex].SolveImpulse();
+        //CheckSolveImpulse(contactJoints[jointIndex]);
       }
     }
     for (int iterationIndex = 0; iterationIndex < penetrationIterationsCount; iterationIndex++)
@@ -40,6 +47,7 @@ struct Solver
       for (size_t jointIndex = 0; jointIndex < contactJoints.size(); jointIndex++)
       {
         contactJoints[jointIndex].SolveDisplacement();
+        //CheckSolveDisplacingImpulse(contactJoints[jointIndex]);
       }
     }
   }

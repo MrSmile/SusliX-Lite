@@ -1,4 +1,5 @@
 #pragma once
+constexpr double pi = 3.14159265358979323846264338327950288;
 template<typename T>
 class Coords2
 {
@@ -8,7 +9,6 @@ public:
   Coords2(){}
   Coords2(const Vector2<T> &_pos, const T angle)
   {
-    float pi = 3.141592f;
     xVector = Vector2<T>(cos(angle), sin(angle));
     yVector = Vector2<T>(cos(angle + T(pi) / T(2.0)), sin(angle + T(pi) / T(2.0)));
 

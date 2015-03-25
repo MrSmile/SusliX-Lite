@@ -101,9 +101,11 @@ int main()
             physSystem.GetBody(bodyIndex)->acceleration += Vector2f(0.0f, gravity);
           }
         }
+        /*
         RigidBody *draggedBody = physSystem.GetBody(1);
         Vector2f dstVelocity = (mousePos - draggedBody->coords.pos) * 5e1f;
         draggedBody->acceleration += (dstVelocity - draggedBody->velocity) * 5e0;
+        */
 
         physSystem.Update(integrationTime);
         physicsTime = physicsClock.getElapsedTime().asSeconds();
