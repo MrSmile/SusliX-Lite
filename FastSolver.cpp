@@ -1,7 +1,6 @@
 #include <cmath>
 #include <algorithm>
 #include "Joints.h"
-#include <emmintrin.h>
 #include <iostream>
 #include <cassert>
 #include <cstring>
@@ -61,6 +60,47 @@ template<int width> struct alignas(width * sizeof(float)) Vec
     }
 };
 
+template<int width> Vec<width> operator + (const Vec<width> &a, const Vec<width> &b)
+{
+    Vec<width> res = a;  res += b;  return res;
+}
+
+template<int width> Vec<width> operator - (const Vec<width> &a, const Vec<width> &b)
+{
+    Vec<width> res = a;  res -= b;  return res;
+}
+
+template<int width> Vec<width> operator * (const Vec<width> &a, const Vec<width> &b)
+{
+    Vec<width> res = a;  res *= b;  return res;
+}
+
+template<int width> Vec<width> operator / (const Vec<width> &a, const Vec<width> &b)
+{
+    Vec<width> res = a;  res /= b;  return res;
+}
+
+template<int width> Vec<width> min(const Vec<width> &a, const Vec<width> &b)
+{
+    Vec<width> res;
+    for(int i = 0; i < width; i++)
+        res.data[i] = a.data[i] < b.data[i] ? a.data[i] : b.data[i];
+    return res;
+}
+
+template<int width> Vec<width> max(const Vec<width> &a, const Vec<width> &b)
+{
+    Vec<width> res;
+    for(int i = 0; i < width; i++)
+        res.data[i] = a.data[i] > b.data[i] ? a.data[i] : b.data[i];
+    return res;
+}
+
+
+#if 1  // SSE
+
+#include <emmintrin.h>
+
 template<> struct Vec<4>
 {
     __m128 data;
@@ -75,7 +115,7 @@ template<> struct Vec<4>
 
     Vec operator - () const
     {
-        Vec res(0);  _mm_sub_ps(res.data, data);  return res;
+        Vec res(0);  res.data = _mm_sub_ps(res.data, data);  return res;
     }
 
     Vec &operator += (const Vec &v)
@@ -109,68 +149,25 @@ template<> struct Vec<4>
     }
 };
 
-template<int width> Vec<width> operator + (const Vec<width> &a, const Vec<width> &b)
+template<> Vec<4> min(const Vec<4> &a, const Vec<4> &b)
 {
-    Vec<width> res = a;  res += b;  return res;
+    Vec<4> res;  res.data = _mm_min_ps(a.data, b.data);  return res;
 }
 
-template<int width> Vec<width> operator - (const Vec<width> &a, const Vec<width> &b)
+template<> Vec<4> max(const Vec<4> &a, const Vec<4> &b)
 {
-    Vec<width> res = a;  res -= b;  return res;
+    Vec<4> res;  res.data = _mm_max_ps(a.data, b.data);  return res;
 }
 
-template<int width> Vec<width> operator * (const Vec<width> &a, const Vec<width> &b)
-{
-    Vec<width> res = a;  res *= b;  return res;
-}
+#endif  // SSE
 
-template<int width> Vec<width> operator / (const Vec<width> &a, const Vec<width> &b)
-{
-    Vec<width> res = a;  res /= b;  return res;
-}
-
-template<int width> Vec<width> max0(const Vec<width> &v)
-{
-    Vec<width> res;
-    for(int i = 0; i < width; i++)
-        res.data[i] = v.data[i] > 0 ? v.data[i] : 0;
-    return res;
-}
-
-template<> Vec<4> max0(const Vec<4> &v)
-{
-    Vec<4> res;
-    res.data = _mm_max_ps(_mm_set1_ps(0), v.data);
-    return res;
-}
-
-template<int width> Vec<width> limit(const Vec<width> &v, const Vec<width> &l)
-{
-    Vec<width> res;
-    for(int i = 0; i < width; i++)
-    {
-        float vabs = v.data[i] < 0 ? -v.data[i] : v.data[i];
-        vabs = vabs < l.data[i] ? vabs : l.data[i];
-        res.data[i] = v.data[i] < 0 ? -vabs : vabs;
-    }
-    return res;
-}
-
-template<> Vec<4> limit(const Vec<4> &v, const Vec<4> &l)
-{
-    Vec<4> res;
-    __m128 sign = _mm_and_ps(v.data, _mm_castsi128_ps(_mm_set1_epi32(0x80000000)));
-    __m128 vabs = _mm_and_ps(v.data, _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF)));
-    res.data = _mm_or_ps(sign, _mm_min_ps(vabs, l.data));
-    return res;
-}
 
 
 template<int degreeCount, int vectorWidth> struct JointDataFriction
 {
     Vec<vectorWidth> projMainPre[2 * degreeCount], projMainPost[2 * degreeCount];
     Vec<vectorWidth> projFrictPre[2 * degreeCount], projFrictPost[2 * degreeCount];
-    Vec<vectorWidth> dstVel;
+    Vec<vectorWidth> offsMain;
 
     Vec<vectorWidth> impulseMain;
     Vec<vectorWidth> impulseFrict;
@@ -193,15 +190,16 @@ template<int degreeCount, int vectorWidth> struct JointDataFriction
     {
         constexpr float frictCoeff = 0.3f;
 
-        Vec<vectorWidth> deltaMain = impulseMain;  impulseMain += dstVel;
-        for(int j = 0; j < 2 * degreeCount; j++)impulseMain -= projMainPre[j] * bodyData[j];
-        impulseMain = max0(impulseMain);  deltaMain = impulseMain - deltaMain;
-        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projMainPost[j] * deltaMain;
+        Vec<vectorWidth> delta = offsMain;
+        for(int j = 0; j < 2 * degreeCount; j++)delta += projMainPre[j] * bodyData[j];
+        delta = min(delta, impulseMain);  impulseMain -= delta;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] -= projMainPost[j] * delta;
 
-        Vec<vectorWidth> deltaFrict = impulseFrict, maxFrict = Vec<vectorWidth>(frictCoeff) * impulseMain;
-        for(int j = 0; j < 2 * degreeCount; j++)impulseFrict -= projFrictPre[j] * bodyData[j];
-        impulseFrict = limit(impulseFrict, maxFrict);  deltaFrict = impulseFrict - deltaFrict;
-        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projFrictPost[j] * deltaFrict;
+        delta = Vec<vectorWidth>(0);
+        Vec<vectorWidth> maxFrict = Vec<vectorWidth>(frictCoeff) * impulseMain;
+        for(int j = 0; j < 2 * degreeCount; j++)delta += projFrictPre[j] * bodyData[j];
+        delta = min(max(delta, impulseFrict - maxFrict), impulseFrict + maxFrict);  impulseFrict -= delta;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] -= projFrictPost[j] * delta;
 
         for(int i = 0; i < vectorWidth; i++)
         {
@@ -216,7 +214,7 @@ template<int degreeCount, int vectorWidth> struct JointDataFriction
 template<int degreeCount, int vectorWidth> struct JointDataSimple
 {
     Vec<vectorWidth> projPre[2 * degreeCount], projPost[2 * degreeCount];
-    Vec<vectorWidth> dstVel;
+    Vec<vectorWidth> offs;
 
     Vec<vectorWidth> impulse;
     Vec<vectorWidth> bodyData[2 * degreeCount];
@@ -236,10 +234,10 @@ template<int degreeCount, int vectorWidth> struct JointDataSimple
 
     void Solve() __attribute__((noinline))
     {
-        Vec<vectorWidth> delta = impulse;  impulse += dstVel;
-        for(int j = 0; j < 2 * degreeCount; j++)impulse -= projPre[j] * bodyData[j];
-        impulse = max0(impulse);  delta = impulse - delta;
-        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projPost[j] * delta;
+        Vec<vectorWidth> delta = offs;
+        for(int j = 0; j < 2 * degreeCount; j++)delta += projPre[j] * bodyData[j];
+        delta = min(delta, impulse);  impulse -= delta;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] -= projPost[j] * delta;
 
         for(int i = 0; i < vectorWidth; i++)
         {
@@ -298,7 +296,7 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     data.projFrictPost[4][index] = joint.frictionLimiter.compMass2_linear.y;
     data.projFrictPost[5][index] = joint.frictionLimiter.compMass2_angular;
 
-    data.dstVel[index] = joint.normalLimiter.dstVelocity * joint.normalLimiter.compInvMass;
+    data.offsMain[index] = -joint.normalLimiter.dstVelocity * joint.normalLimiter.compInvMass;
 
     data.impulseMain[index] = joint.normalLimiter.accumulatedImpulse;
     data.impulseFrict[index] = joint.frictionLimiter.accumulatedImpulse;
@@ -347,7 +345,7 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     data.projPost[4][index] = joint.normalLimiter.compMass2_linear.y;
     data.projPost[5][index] = joint.normalLimiter.compMass2_angular;
 
-    data.dstVel[index] = joint.normalLimiter.dstDisplacingVelocity * joint.normalLimiter.compInvMass;
+    data.offs[index] = -joint.normalLimiter.dstDisplacingVelocity * joint.normalLimiter.compInvMass;
     data.impulse[index] = joint.normalLimiter.accumulatedDisplacingImpulse;
 
     data.bodyData[0][index] = joint.body1->displacingVelocity.x;
@@ -415,7 +413,7 @@ float CheckSolveDisplacingImpulse(ContactJoint &joint)
 
     err += std::abs(joint.normalLimiter.accumulatedDisplacingImpulse - data.impulse[index]);
 
-    if(!(err < 1e-3))std::cout << "Error " << err << std::endl;
+    if(!(err < 1e-5))std::cout << "Error " << err << std::endl;
     return err;
 }
 
