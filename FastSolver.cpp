@@ -251,15 +251,26 @@ template<int degreeCount, int vectorWidth> struct JointDataSimple
     }
 };
 
+template<template<int, int> class T, int deg, int width> bool CheckBodyPtr(T<deg, width> *data, float *ptr)
+{
+    typedef T<deg, width> Data;
+    constexpr ptrdiff_t offs0 = offsetof(Data, bodyData);
+    constexpr ptrdiff_t offs1 = offs0 + deg * width * sizeof(float);
+    constexpr ptrdiff_t size = width * sizeof(float);
+
+    ptrdiff_t offs = reinterpret_cast<char *>(ptr) - reinterpret_cast<char *>(data);
+    if(offs >= 0 && offs < sizeof(Data))return false;
+
+    offs = (offs + 65536 * sizeof(Data)) % sizeof(Data);
+    return offs >= offs0 && offs < offs0 + size || offs >= offs1 && offs < offs1 + size;
+}
+
 template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     JointDataFriction<3, vectorWidth> &data, int index, float *next0, float *next1)
 {
-    typedef JointDataFriction<3, vectorWidth> Data;  assert(unsigned(index) < vectorWidth);
-    ptrdiff_t offs0 = (reinterpret_cast<char *>(next0) - reinterpret_cast<char *>(&data) + 65536 * sizeof(data)) % sizeof(data);
-    ptrdiff_t offs1 = (reinterpret_cast<char *>(next1) - reinterpret_cast<char *>(&data) + 65536 * sizeof(data)) % sizeof(data);
-    ptrdiff_t beg = offsetof(Data, bodyData), end = beg + sizeof(data.bodyData) - 2 * vectorWidth * sizeof(float);
-    assert(offs0 >= beg && offs0 < end);
-    assert(offs1 >= beg && offs1 < end);
+    assert(unsigned(index) < vectorWidth);
+    assert(next0 == data.BodyPtr(0, index) || CheckBodyPtr(&data, next0));
+    assert(next1 == data.BodyPtr(1, index) || CheckBodyPtr(&data, next1));
 
     data.projMainPre[0][index] = joint.normalLimiter.normalProjector1.x * joint.normalLimiter.compInvMass;
     data.projMainPre[1][index] = joint.normalLimiter.normalProjector1.y * joint.normalLimiter.compInvMass;
@@ -319,12 +330,9 @@ template<int vectorWidth> void ApplyBodyData(RigidBody *body, const float *data,
 template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     JointDataSimple<3, vectorWidth> &data, int index, float *next0, float *next1)
 {
-    typedef JointDataSimple<3, vectorWidth> Data;  assert(unsigned(index) < vectorWidth);
-    ptrdiff_t offs0 = (reinterpret_cast<char *>(next0) - reinterpret_cast<char *>(&data) + 65536 * sizeof(data)) % sizeof(data);
-    ptrdiff_t offs1 = (reinterpret_cast<char *>(next1) - reinterpret_cast<char *>(&data) + 65536 * sizeof(data)) % sizeof(data);
-    ptrdiff_t beg = offsetof(Data, bodyData), end = beg + sizeof(data.bodyData) - 2 * vectorWidth * sizeof(float);
-    assert(offs0 >= beg && offs0 < end);
-    assert(offs1 >= beg && offs1 < end);
+    assert(unsigned(index) < vectorWidth);
+    assert(next0 == data.BodyPtr(0, index) || CheckBodyPtr(&data, next0));
+    assert(next1 == data.BodyPtr(1, index) || CheckBodyPtr(&data, next1));
 
     data.projPre[0][index] = joint.normalLimiter.normalProjector1.x * joint.normalLimiter.compInvMass;
     data.projPre[1][index] = joint.normalLimiter.normalProjector1.y * joint.normalLimiter.compInvMass;
