@@ -168,117 +168,103 @@ template<> Vec<4> limit(const Vec<4> &v, const Vec<4> &l)
 
 template<int degreeCount, int vectorWidth> struct JointDataFriction
 {
-    Vec<vectorWidth> projMain[2][degreeCount];
-    Vec<vectorWidth> projFrict[2][degreeCount];
+    Vec<vectorWidth> projMain[2 * degreeCount];
+    Vec<vectorWidth> projFrict[2 * degreeCount];
     Vec<vectorWidth> dstVel, frictCoeff;
 
     Vec<vectorWidth> impulseMain;
     Vec<vectorWidth> impulseFrict;
-    Vec<vectorWidth> bodyData[2][degreeCount];
+    Vec<vectorWidth> bodyData[2 * degreeCount];
     float *next[2][vectorWidth];
+
+    float *BodyPtr(int pair, int index)
+    {
+        return &bodyData[pair * degreeCount][index];
+    }
 
     JointDataFriction()
     {
         std::memset(this, 0, sizeof(*this) - sizeof(next));
-        for(int i = 0; i < vectorWidth; i++)next[0][i] = &bodyData[0][0][i];
-        for(int i = 0; i < vectorWidth; i++)next[1][i] = &bodyData[1][0][i];
+        for(int i = 0; i < vectorWidth; i++)next[0][i] = BodyPtr(0, i);
+        for(int i = 0; i < vectorWidth; i++)next[1][i] = BodyPtr(1, i);
     }
 
     void Solve() __attribute__((noinline))
     {
         Vec<vectorWidth> deltaMain = impulseMain;  impulseMain += dstVel;
-        for(int j = 0; j < degreeCount; j++)
-            impulseMain -= projMain[0][j] * bodyData[0][j];
-        for(int j = 0; j < degreeCount; j++)
-            impulseMain -= projMain[1][j] * bodyData[1][j];
-        impulseMain = max0(impulseMain);
-
-        deltaMain = impulseMain - deltaMain;
-        for(int j = 0; j < degreeCount; j++)
-            bodyData[0][j] += projMain[0][j] * deltaMain;
-        for(int j = 0; j < degreeCount; j++)
-            bodyData[1][j] += projMain[1][j] * deltaMain;
+        for(int j = 0; j < 2 * degreeCount; j++)impulseMain -= projMain[j] * bodyData[j];
+        impulseMain = max0(impulseMain);  deltaMain = impulseMain - deltaMain;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projMain[j] * deltaMain;
 
         Vec<vectorWidth> deltaFrict = impulseFrict;
-        for(int j = 0; j < degreeCount; j++)
-            impulseFrict -= projFrict[0][j] * bodyData[0][j];
-        for(int j = 0; j < degreeCount; j++)
-            impulseFrict -= projFrict[1][j] * bodyData[1][j];
-        impulseFrict = limit(impulseFrict, frictCoeff * impulseMain);
-
-        deltaFrict = impulseFrict - deltaFrict;
-        for(int j = 0; j < degreeCount; j++)
-            bodyData[0][j] += projFrict[0][j] * deltaFrict;
-        for(int j = 0; j < degreeCount; j++)
-            bodyData[1][j] += projFrict[1][j] * deltaFrict;
+        for(int j = 0; j < 2 * degreeCount; j++)impulseFrict -= projFrict[j] * bodyData[j];
+        impulseFrict = limit(impulseFrict, frictCoeff * impulseMain);  deltaFrict = impulseFrict - deltaFrict;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projFrict[j] * deltaFrict;
 
         for(int i = 0; i < vectorWidth; i++)
         {
             for(int j = 0; j < degreeCount; j++)
-                next[0][i][j * vectorWidth] = bodyData[0][j][i];
+                next[0][i][j * vectorWidth] = bodyData[j + 0 * degreeCount][i];
             for(int j = 0; j < degreeCount; j++)
-                next[1][i][j * vectorWidth] = bodyData[1][j][i];
+                next[1][i][j * vectorWidth] = bodyData[j + 1 * degreeCount][i];
         }
     }
 };
 
 template<int degreeCount, int vectorWidth> struct JointDataSimple
 {
-    Vec<vectorWidth> proj[2][degreeCount];
+    Vec<vectorWidth> proj[2 * degreeCount];
     Vec<vectorWidth> dstVel;
 
     Vec<vectorWidth> impulse;
-    Vec<vectorWidth> bodyData[2][degreeCount];
+    Vec<vectorWidth> bodyData[2 * degreeCount];
     float *next[2][vectorWidth];
+
+    float *BodyPtr(int pair, int index)
+    {
+        return &bodyData[pair * degreeCount][index];
+    }
 
     JointDataSimple()
     {
         std::memset(this, 0, sizeof(*this) - sizeof(next));
-        for(int i = 0; i < vectorWidth; i++)next[0][i] = &bodyData[0][0][i];
-        for(int i = 0; i < vectorWidth; i++)next[1][i] = &bodyData[1][0][i];
+        for(int i = 0; i < vectorWidth; i++)next[0][i] = BodyPtr(0, i);
+        for(int i = 0; i < vectorWidth; i++)next[1][i] = BodyPtr(1, i);
     }
 
     void Solve() __attribute__((noinline))
     {
         Vec<vectorWidth> delta = impulse;  impulse += dstVel;
-        for(int j = 0; j < degreeCount; j++)
-            impulse -= proj[0][j] * bodyData[0][j];
-        for(int j = 0; j < degreeCount; j++)
-            impulse -= proj[1][j] * bodyData[1][j];
-        impulse = max0(impulse);
-
-        delta = impulse - delta;
-        for(int j = 0; j < degreeCount; j++)
-            bodyData[0][j] += proj[0][j] * delta;
-        for(int j = 0; j < degreeCount; j++)
-            bodyData[1][j] += proj[1][j] * delta;
+        for(int j = 0; j < 2 * degreeCount; j++)impulse -= proj[j] * bodyData[j];
+        impulse = max0(impulse);  delta = impulse - delta;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += proj[j] * delta;
 
         for(int i = 0; i < vectorWidth; i++)
         {
             for(int j = 0; j < degreeCount; j++)
-                next[0][i][j * vectorWidth] = bodyData[0][j][i];
+                next[0][i][j * vectorWidth] = bodyData[j + 0 * degreeCount][i];
             for(int j = 0; j < degreeCount; j++)
-                next[1][i][j * vectorWidth] = bodyData[1][j][i];
+                next[1][i][j * vectorWidth] = bodyData[j + 1 * degreeCount][i];
         }
     }
 };
 
 template<int vectorWidth> void ClearJointData(JointDataFriction<3, vectorWidth> &data, int index)
 {
-    data.projMain[0][0][index] = data.projMain[0][1][index] = data.projMain[0][2][index] = 0;
-    data.projMain[1][0][index] = data.projMain[1][1][index] = data.projMain[1][2][index] = 0;
+    data.projMain[0][index] = data.projMain[1][index] = data.projMain[2][index] = 0;
+    data.projMain[3][index] = data.projMain[4][index] = data.projMain[5][index] = 0;
 
-    data.projFrict[0][0][index] = data.projFrict[0][1][index] = data.projFrict[0][2][index] = 0;
-    data.projFrict[1][0][index] = data.projFrict[1][1][index] = data.projFrict[1][2][index] = 0;
+    data.projFrict[0][index] = data.projFrict[1][index] = data.projFrict[2][index] = 0;
+    data.projFrict[3][index] = data.projFrict[4][index] = data.projFrict[5][index] = 0;
 
     data.dstVel[index] = data.frictCoeff[index] = 0;
     data.impulseMain[index] = data.impulseFrict[index] = 0;
 
-    data.bodyData[0][0][index] = data.bodyData[0][1][index] = data.bodyData[0][2][index] = 0;
-    data.bodyData[1][0][index] = data.bodyData[1][1][index] = data.bodyData[1][2][index] = 0;
+    data.bodyData[0][index] = data.bodyData[1][index] = data.bodyData[2][index] = 0;
+    data.bodyData[3][index] = data.bodyData[4][index] = data.bodyData[5][index] = 0;
 
-    data.next[0][index] = &data.bodyData[0][0][index];
-    data.next[1][index] = &data.bodyData[1][0][index];
+    data.next[0][index] = data.BodyPtr(0, index);
+    data.next[1][index] = data.BodyPtr(1, index);
 }
 
 template<int vectorWidth> void FillJointData(const ContactJoint &joint,
@@ -295,20 +281,20 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     float invSqrtI1 = std::sqrt(joint.body1->invInertia + eps), invSqrtI2 = std::sqrt(joint.body2->invInertia + eps);
 
     float normMain = std::sqrt(joint.normalLimiter.compInvMass + eps);
-    data.projMain[0][0][index] = joint.normalLimiter.normalProjector1.x * invSqrtM1 * normMain;
-    data.projMain[0][1][index] = joint.normalLimiter.normalProjector1.y * invSqrtM1 * normMain;
-    data.projMain[0][2][index] = joint.normalLimiter.angularProjector1 * invSqrtI1 * normMain;
-    data.projMain[1][0][index] = joint.normalLimiter.normalProjector2.x * invSqrtM2 * normMain;
-    data.projMain[1][1][index] = joint.normalLimiter.normalProjector2.y * invSqrtM2 * normMain;
-    data.projMain[1][2][index] = joint.normalLimiter.angularProjector2 * invSqrtI2 * normMain;
+    data.projMain[0][index] = joint.normalLimiter.normalProjector1.x * invSqrtM1 * normMain;
+    data.projMain[1][index] = joint.normalLimiter.normalProjector1.y * invSqrtM1 * normMain;
+    data.projMain[2][index] = joint.normalLimiter.angularProjector1 * invSqrtI1 * normMain;
+    data.projMain[3][index] = joint.normalLimiter.normalProjector2.x * invSqrtM2 * normMain;
+    data.projMain[4][index] = joint.normalLimiter.normalProjector2.y * invSqrtM2 * normMain;
+    data.projMain[5][index] = joint.normalLimiter.angularProjector2 * invSqrtI2 * normMain;
 
     float normFrict = std::sqrt(joint.frictionLimiter.compInvMass + eps);
-    data.projFrict[0][0][index] = joint.frictionLimiter.normalProjector1.x * invSqrtM1 * normFrict;
-    data.projFrict[0][1][index] = joint.frictionLimiter.normalProjector1.y * invSqrtM1 * normFrict;
-    data.projFrict[0][2][index] = joint.frictionLimiter.angularProjector1 * invSqrtI1 * normFrict;
-    data.projFrict[1][0][index] = joint.frictionLimiter.normalProjector2.x * invSqrtM2 * normFrict;
-    data.projFrict[1][1][index] = joint.frictionLimiter.normalProjector2.y * invSqrtM2 * normFrict;
-    data.projFrict[1][2][index] = joint.frictionLimiter.angularProjector2 * invSqrtI2 * normFrict;
+    data.projFrict[0][index] = joint.frictionLimiter.normalProjector1.x * invSqrtM1 * normFrict;
+    data.projFrict[1][index] = joint.frictionLimiter.normalProjector1.y * invSqrtM1 * normFrict;
+    data.projFrict[2][index] = joint.frictionLimiter.angularProjector1 * invSqrtI1 * normFrict;
+    data.projFrict[3][index] = joint.frictionLimiter.normalProjector2.x * invSqrtM2 * normFrict;
+    data.projFrict[4][index] = joint.frictionLimiter.normalProjector2.y * invSqrtM2 * normFrict;
+    data.projFrict[5][index] = joint.frictionLimiter.angularProjector2 * invSqrtI2 * normFrict;
 
     data.dstVel[index] = joint.normalLimiter.dstVelocity * normMain;
     data.frictCoeff[index] = 0.3f * normMain / normFrict;
@@ -316,12 +302,12 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     data.impulseMain[index] = joint.normalLimiter.accumulatedImpulse / normMain;
     data.impulseFrict[index] = joint.frictionLimiter.accumulatedImpulse / normFrict;
 
-    data.bodyData[0][0][index] = joint.body1->velocity.x / invSqrtM1;
-    data.bodyData[0][1][index] = joint.body1->velocity.y / invSqrtM1;
-    data.bodyData[0][2][index] = joint.body1->angularVelocity / invSqrtI1;
-    data.bodyData[1][0][index] = joint.body2->velocity.x / invSqrtM2;
-    data.bodyData[1][1][index] = joint.body2->velocity.y / invSqrtM2;
-    data.bodyData[1][2][index] = joint.body2->angularVelocity / invSqrtI2;
+    data.bodyData[0][index] = joint.body1->velocity.x / invSqrtM1;
+    data.bodyData[1][index] = joint.body1->velocity.y / invSqrtM1;
+    data.bodyData[2][index] = joint.body1->angularVelocity / invSqrtI1;
+    data.bodyData[3][index] = joint.body2->velocity.x / invSqrtM2;
+    data.bodyData[4][index] = joint.body2->velocity.y / invSqrtM2;
+    data.bodyData[5][index] = joint.body2->angularVelocity / invSqrtI2;
 
     data.next[0][index] = next0;
     data.next[1][index] = next1;
@@ -345,16 +331,16 @@ template<int vectorWidth> void ApplyBodyData(RigidBody *body, const float *data,
 
 template<int vectorWidth> void ClearJointData(JointDataSimple<3, vectorWidth> &data, int index)
 {
-    data.proj[0][0][index] = data.proj[0][1][index] = data.proj[0][2][index] = 0;
-    data.proj[1][0][index] = data.proj[1][1][index] = data.proj[1][2][index] = 0;
+    data.proj[0][index] = data.proj[1][index] = data.proj[2][index] = 0;
+    data.proj[3][index] = data.proj[4][index] = data.proj[5][index] = 0;
 
     data.dstVel[index] = data.impulse[index] = 0;
 
-    data.bodyData[0][0][index] = data.bodyData[0][1][index] = data.bodyData[0][2][index] = 0;
-    data.bodyData[1][0][index] = data.bodyData[1][1][index] = data.bodyData[1][2][index] = 0;
+    data.bodyData[0][index] = data.bodyData[1][index] = data.bodyData[2][index] = 0;
+    data.bodyData[3][index] = data.bodyData[4][index] = data.bodyData[5][index] = 0;
 
-    data.next[0][index] = &data.bodyData[0][0][index];
-    data.next[1][index] = &data.bodyData[1][0][index];
+    data.next[0][index] = data.BodyPtr(0, index);
+    data.next[1][index] = data.BodyPtr(1, index);
 }
 
 template<int vectorWidth> void FillJointData(const ContactJoint &joint,
@@ -371,22 +357,22 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     float invSqrtI1 = std::sqrt(joint.body1->invInertia + eps), invSqrtI2 = std::sqrt(joint.body2->invInertia + eps);
 
     float norm = std::sqrt(joint.normalLimiter.compInvMass + eps);
-    data.proj[0][0][index] = joint.normalLimiter.normalProjector1.x * invSqrtM1 * norm;
-    data.proj[0][1][index] = joint.normalLimiter.normalProjector1.y * invSqrtM1 * norm;
-    data.proj[0][2][index] = joint.normalLimiter.angularProjector1 * invSqrtI1 * norm;
-    data.proj[1][0][index] = joint.normalLimiter.normalProjector2.x * invSqrtM2 * norm;
-    data.proj[1][1][index] = joint.normalLimiter.normalProjector2.y * invSqrtM2 * norm;
-    data.proj[1][2][index] = joint.normalLimiter.angularProjector2 * invSqrtI2 * norm;
+    data.proj[0][index] = joint.normalLimiter.normalProjector1.x * invSqrtM1 * norm;
+    data.proj[1][index] = joint.normalLimiter.normalProjector1.y * invSqrtM1 * norm;
+    data.proj[2][index] = joint.normalLimiter.angularProjector1 * invSqrtI1 * norm;
+    data.proj[3][index] = joint.normalLimiter.normalProjector2.x * invSqrtM2 * norm;
+    data.proj[4][index] = joint.normalLimiter.normalProjector2.y * invSqrtM2 * norm;
+    data.proj[5][index] = joint.normalLimiter.angularProjector2 * invSqrtI2 * norm;
 
     data.dstVel[index] = joint.normalLimiter.dstDisplacingVelocity * norm;
     data.impulse[index] = joint.normalLimiter.accumulatedDisplacingImpulse / norm;
 
-    data.bodyData[0][0][index] = joint.body1->displacingVelocity.x / invSqrtM1;
-    data.bodyData[0][1][index] = joint.body1->displacingVelocity.y / invSqrtM1;
-    data.bodyData[0][2][index] = joint.body1->displacingAngularVelocity / invSqrtI1;
-    data.bodyData[1][0][index] = joint.body2->displacingVelocity.x / invSqrtM2;
-    data.bodyData[1][1][index] = joint.body2->displacingVelocity.y / invSqrtM2;
-    data.bodyData[1][2][index] = joint.body2->displacingAngularVelocity / invSqrtI2;
+    data.bodyData[0][index] = joint.body1->displacingVelocity.x / invSqrtM1;
+    data.bodyData[1][index] = joint.body1->displacingVelocity.y / invSqrtM1;
+    data.bodyData[2][index] = joint.body1->displacingAngularVelocity / invSqrtI1;
+    data.bodyData[3][index] = joint.body2->displacingVelocity.x / invSqrtM2;
+    data.bodyData[4][index] = joint.body2->displacingVelocity.y / invSqrtM2;
+    data.bodyData[5][index] = joint.body2->displacingAngularVelocity / invSqrtI2;
 
     data.next[0][index] = next0;
     data.next[1][index] = next1;
@@ -397,12 +383,12 @@ template<int vectorWidth> void ApplyJointData(ContactJoint &joint, const JointDa
     float invSqrtM1 = std::sqrt(joint.body1->invMass), invSqrtM2 = std::sqrt(joint.body2->invMass);
     float invSqrtI1 = std::sqrt(joint.body1->invInertia), invSqrtI2 = std::sqrt(joint.body2->invInertia);
 
-    joint.body1->displacingVelocity.x = data.bodyData[0][0][index] * invSqrtM1;
-    joint.body1->displacingVelocity.y = data.bodyData[0][1][index] * invSqrtM1;
-    joint.body1->displacingAngularVelocity = data.bodyData[0][2][index] * invSqrtI1;
-    joint.body2->displacingVelocity.x = data.bodyData[1][0][index] * invSqrtM2;
-    joint.body2->displacingVelocity.y = data.bodyData[1][1][index] * invSqrtM2;
-    joint.body2->displacingAngularVelocity = data.bodyData[1][2][index] * invSqrtI2;
+    joint.body1->displacingVelocity.x = data.bodyData[0][index] * invSqrtM1;
+    joint.body1->displacingVelocity.y = data.bodyData[1][index] * invSqrtM1;
+    joint.body1->displacingAngularVelocity = data.bodyData[2][index] * invSqrtI1;
+    joint.body2->displacingVelocity.x = data.bodyData[3][index] * invSqrtM2;
+    joint.body2->displacingVelocity.y = data.bodyData[4][index] * invSqrtM2;
+    joint.body2->displacingAngularVelocity = data.bodyData[5][index] * invSqrtI2;
 
     float norm = std::sqrt(joint.normalLimiter.compInvMass);
     joint.normalLimiter.accumulatedDisplacingImpulse = data.impulse[index] * norm;
@@ -421,19 +407,19 @@ float CheckSolveImpulse(ContactJoint &joint)
 {
     constexpr int index = 2;
     JointDataFriction<3, 4> data;
-    FillJointData(joint, data, index, &data.bodyData[0][0][index], &data.bodyData[1][0][index]);
+    FillJointData(joint, data, index, &data.bodyData[0][index], &data.bodyData[3][index]);
     joint.SolveImpulse();
     data.Solve();
 
     float err = 0;
     float invSqrtM1 = std::sqrt(joint.body1->invMass), invSqrtM2 = std::sqrt(joint.body2->invMass);
     float invSqrtI1 = std::sqrt(joint.body1->invInertia), invSqrtI2 = std::sqrt(joint.body2->invInertia);
-    err += std::abs(joint.body1->velocity.x - data.bodyData[0][0][index] * invSqrtM1);
-    err += std::abs(joint.body1->velocity.y - data.bodyData[0][1][index] * invSqrtM1);
-    err += std::abs(joint.body1->angularVelocity - data.bodyData[0][2][index] * invSqrtI1);
-    err += std::abs(joint.body2->velocity.x - data.bodyData[1][0][index] * invSqrtM2);
-    err += std::abs(joint.body2->velocity.y - data.bodyData[1][1][index] * invSqrtM2);
-    err += std::abs(joint.body2->angularVelocity - data.bodyData[1][2][index] * invSqrtI2);
+    err += std::abs(joint.body1->velocity.x - data.bodyData[0][index] * invSqrtM1);
+    err += std::abs(joint.body1->velocity.y - data.bodyData[1][index] * invSqrtM1);
+    err += std::abs(joint.body1->angularVelocity - data.bodyData[2][index] * invSqrtI1);
+    err += std::abs(joint.body2->velocity.x - data.bodyData[3][index] * invSqrtM2);
+    err += std::abs(joint.body2->velocity.y - data.bodyData[4][index] * invSqrtM2);
+    err += std::abs(joint.body2->angularVelocity - data.bodyData[5][index] * invSqrtI2);
 
     float normMain = std::sqrt(joint.normalLimiter.compInvMass);
     float normFrict = std::sqrt(joint.frictionLimiter.compInvMass);
@@ -448,19 +434,19 @@ float CheckSolveDisplacingImpulse(ContactJoint &joint)
 {
     constexpr int index = 1;
     JointDataSimple<3, 4> data;
-    FillJointData(joint, data, index, &data.bodyData[0][0][index], &data.bodyData[1][0][index]);
+    FillJointData(joint, data, index, &data.bodyData[0][index], &data.bodyData[3][index]);
     joint.SolveDisplacement();
     data.Solve();
 
     float err = 0;
     float invSqrtM1 = std::sqrt(joint.body1->invMass), invSqrtM2 = std::sqrt(joint.body2->invMass);
     float invSqrtI1 = std::sqrt(joint.body1->invInertia), invSqrtI2 = std::sqrt(joint.body2->invInertia);
-    err += std::abs(joint.body1->displacingVelocity.x - data.bodyData[0][0][index] * invSqrtM1);
-    err += std::abs(joint.body1->displacingVelocity.y - data.bodyData[0][1][index] * invSqrtM1);
-    err += std::abs(joint.body1->displacingAngularVelocity - data.bodyData[0][2][index] * invSqrtI1);
-    err += std::abs(joint.body2->displacingVelocity.x - data.bodyData[1][0][index] * invSqrtM2);
-    err += std::abs(joint.body2->displacingVelocity.y - data.bodyData[1][1][index] * invSqrtM2);
-    err += std::abs(joint.body2->displacingAngularVelocity - data.bodyData[1][2][index] * invSqrtI2);
+    err += std::abs(joint.body1->displacingVelocity.x - data.bodyData[0][index] * invSqrtM1);
+    err += std::abs(joint.body1->displacingVelocity.y - data.bodyData[1][index] * invSqrtM1);
+    err += std::abs(joint.body1->displacingAngularVelocity - data.bodyData[2][index] * invSqrtI1);
+    err += std::abs(joint.body2->displacingVelocity.x - data.bodyData[3][index] * invSqrtM2);
+    err += std::abs(joint.body2->displacingVelocity.y - data.bodyData[4][index] * invSqrtM2);
+    err += std::abs(joint.body2->displacingAngularVelocity - data.bodyData[5][index] * invSqrtI2);
 
     float norm = std::sqrt(joint.normalLimiter.compInvMass);
     err += std::abs(joint.normalLimiter.accumulatedDisplacingImpulse - data.impulse[index] * norm);
@@ -550,7 +536,7 @@ template<int log2width> struct JointSorter
 
     template<typename T> static float *DataPointer(T *data, int ref)
     {
-        return &data[ref >> (log2width + 1)].bodyData[ref & 1][0][(ref >> 1) & mask];
+        return data[ref >> (log2width + 1)].BodyPtr(ref & 1, (ref >> 1) & mask);
     }
 
     template<typename T> void Fill(T *data) const
@@ -580,8 +566,7 @@ template<int log2width> struct JointSorter
 
 void FastSolveJoints(ContactJoint *joints, int nJoints, int nIter, int nDisp)
 {
-    constexpr int log2width = 2;
-    JointSorter<log2width> sorter(joints, nJoints);
+    JointSorter<2> sorter(joints, nJoints);
     sorter.Solve<JointDataFriction>(nIter);
     sorter.Solve<JointDataSimple>(nDisp);
 }
