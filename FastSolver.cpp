@@ -150,7 +150,7 @@ template<int width> Vec<width> limit(const Vec<width> &v, const Vec<width> &l)
     for(int i = 0; i < width; i++)
     {
         float vabs = v.data[i] < 0 ? -v.data[i] : v.data[i];
-        vabs = vabs < l.data[i] ? vabs : 0;
+        vabs = vabs < l.data[i] ? vabs : l.data[i];
         res.data[i] = v.data[i] < 0 ? -vabs : vabs;
     }
     return res;
@@ -168,9 +168,9 @@ template<> Vec<4> limit(const Vec<4> &v, const Vec<4> &l)
 
 template<int degreeCount, int vectorWidth> struct JointDataFriction
 {
-    Vec<vectorWidth> projMain[2 * degreeCount];
-    Vec<vectorWidth> projFrict[2 * degreeCount];
-    Vec<vectorWidth> dstVel, frictCoeff;
+    Vec<vectorWidth> projMainPre[2 * degreeCount], projMainPost[2 * degreeCount];
+    Vec<vectorWidth> projFrictPre[2 * degreeCount], projFrictPost[2 * degreeCount];
+    Vec<vectorWidth> dstVel;
 
     Vec<vectorWidth> impulseMain;
     Vec<vectorWidth> impulseFrict;
@@ -191,15 +191,17 @@ template<int degreeCount, int vectorWidth> struct JointDataFriction
 
     void Solve() __attribute__((noinline))
     {
-        Vec<vectorWidth> deltaMain = impulseMain;  impulseMain += dstVel;
-        for(int j = 0; j < 2 * degreeCount; j++)impulseMain -= projMain[j] * bodyData[j];
-        impulseMain = max0(impulseMain);  deltaMain = impulseMain - deltaMain;
-        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projMain[j] * deltaMain;
+        constexpr float frictCoeff = 0.3f;
 
-        Vec<vectorWidth> deltaFrict = impulseFrict;
-        for(int j = 0; j < 2 * degreeCount; j++)impulseFrict -= projFrict[j] * bodyData[j];
-        impulseFrict = limit(impulseFrict, frictCoeff * impulseMain);  deltaFrict = impulseFrict - deltaFrict;
-        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projFrict[j] * deltaFrict;
+        Vec<vectorWidth> deltaMain = impulseMain;  impulseMain += dstVel;
+        for(int j = 0; j < 2 * degreeCount; j++)impulseMain -= projMainPre[j] * bodyData[j];
+        impulseMain = max0(impulseMain);  deltaMain = impulseMain - deltaMain;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projMainPost[j] * deltaMain;
+
+        Vec<vectorWidth> deltaFrict = impulseFrict, maxFrict = Vec<vectorWidth>(frictCoeff) * impulseMain;
+        for(int j = 0; j < 2 * degreeCount; j++)impulseFrict -= projFrictPre[j] * bodyData[j];
+        impulseFrict = limit(impulseFrict, maxFrict);  deltaFrict = impulseFrict - deltaFrict;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projFrictPost[j] * deltaFrict;
 
         for(int i = 0; i < vectorWidth; i++)
         {
@@ -213,7 +215,7 @@ template<int degreeCount, int vectorWidth> struct JointDataFriction
 
 template<int degreeCount, int vectorWidth> struct JointDataSimple
 {
-    Vec<vectorWidth> proj[2 * degreeCount];
+    Vec<vectorWidth> projPre[2 * degreeCount], projPost[2 * degreeCount];
     Vec<vectorWidth> dstVel;
 
     Vec<vectorWidth> impulse;
@@ -235,9 +237,9 @@ template<int degreeCount, int vectorWidth> struct JointDataSimple
     void Solve() __attribute__((noinline))
     {
         Vec<vectorWidth> delta = impulse;  impulse += dstVel;
-        for(int j = 0; j < 2 * degreeCount; j++)impulse -= proj[j] * bodyData[j];
+        for(int j = 0; j < 2 * degreeCount; j++)impulse -= projPre[j] * bodyData[j];
         impulse = max0(impulse);  delta = impulse - delta;
-        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += proj[j] * delta;
+        for(int j = 0; j < 2 * degreeCount; j++)bodyData[j] += projPost[j] * delta;
 
         for(int i = 0; i < vectorWidth; i++)
         {
@@ -249,24 +251,6 @@ template<int degreeCount, int vectorWidth> struct JointDataSimple
     }
 };
 
-template<int vectorWidth> void ClearJointData(JointDataFriction<3, vectorWidth> &data, int index)
-{
-    data.projMain[0][index] = data.projMain[1][index] = data.projMain[2][index] = 0;
-    data.projMain[3][index] = data.projMain[4][index] = data.projMain[5][index] = 0;
-
-    data.projFrict[0][index] = data.projFrict[1][index] = data.projFrict[2][index] = 0;
-    data.projFrict[3][index] = data.projFrict[4][index] = data.projFrict[5][index] = 0;
-
-    data.dstVel[index] = data.frictCoeff[index] = 0;
-    data.impulseMain[index] = data.impulseFrict[index] = 0;
-
-    data.bodyData[0][index] = data.bodyData[1][index] = data.bodyData[2][index] = 0;
-    data.bodyData[3][index] = data.bodyData[4][index] = data.bodyData[5][index] = 0;
-
-    data.next[0][index] = data.BodyPtr(0, index);
-    data.next[1][index] = data.BodyPtr(1, index);
-}
-
 template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     JointDataFriction<3, vectorWidth> &data, int index, float *next0, float *next1)
 {
@@ -277,37 +261,43 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     assert(offs0 >= beg && offs0 < end);
     assert(offs1 >= beg && offs1 < end);
 
-    float invSqrtM1 = std::sqrt(joint.body1->invMass + eps), invSqrtM2 = std::sqrt(joint.body2->invMass + eps);
-    float invSqrtI1 = std::sqrt(joint.body1->invInertia + eps), invSqrtI2 = std::sqrt(joint.body2->invInertia + eps);
+    data.projMainPre[0][index] = joint.normalLimiter.normalProjector1.x * joint.normalLimiter.compInvMass;
+    data.projMainPre[1][index] = joint.normalLimiter.normalProjector1.y * joint.normalLimiter.compInvMass;
+    data.projMainPre[2][index] = joint.normalLimiter.angularProjector1 * joint.normalLimiter.compInvMass;
+    data.projMainPre[3][index] = joint.normalLimiter.normalProjector2.x * joint.normalLimiter.compInvMass;
+    data.projMainPre[4][index] = joint.normalLimiter.normalProjector2.y * joint.normalLimiter.compInvMass;
+    data.projMainPre[5][index] = joint.normalLimiter.angularProjector2 * joint.normalLimiter.compInvMass;
+    data.projMainPost[0][index] = joint.normalLimiter.compMass1_linear.x;
+    data.projMainPost[1][index] = joint.normalLimiter.compMass1_linear.y;
+    data.projMainPost[2][index] = joint.normalLimiter.compMass1_angular;
+    data.projMainPost[3][index] = joint.normalLimiter.compMass2_linear.x;
+    data.projMainPost[4][index] = joint.normalLimiter.compMass2_linear.y;
+    data.projMainPost[5][index] = joint.normalLimiter.compMass2_angular;
 
-    float normMain = std::sqrt(joint.normalLimiter.compInvMass + eps);
-    data.projMain[0][index] = joint.normalLimiter.normalProjector1.x * invSqrtM1 * normMain;
-    data.projMain[1][index] = joint.normalLimiter.normalProjector1.y * invSqrtM1 * normMain;
-    data.projMain[2][index] = joint.normalLimiter.angularProjector1 * invSqrtI1 * normMain;
-    data.projMain[3][index] = joint.normalLimiter.normalProjector2.x * invSqrtM2 * normMain;
-    data.projMain[4][index] = joint.normalLimiter.normalProjector2.y * invSqrtM2 * normMain;
-    data.projMain[5][index] = joint.normalLimiter.angularProjector2 * invSqrtI2 * normMain;
+    data.projFrictPre[0][index] = joint.frictionLimiter.normalProjector1.x * joint.frictionLimiter.compInvMass;
+    data.projFrictPre[1][index] = joint.frictionLimiter.normalProjector1.y * joint.frictionLimiter.compInvMass;
+    data.projFrictPre[2][index] = joint.frictionLimiter.angularProjector1 * joint.frictionLimiter.compInvMass;
+    data.projFrictPre[3][index] = joint.frictionLimiter.normalProjector2.x * joint.frictionLimiter.compInvMass;
+    data.projFrictPre[4][index] = joint.frictionLimiter.normalProjector2.y * joint.frictionLimiter.compInvMass;
+    data.projFrictPre[5][index] = joint.frictionLimiter.angularProjector2 * joint.frictionLimiter.compInvMass;
+    data.projFrictPost[0][index] = joint.frictionLimiter.compMass1_linear.x;
+    data.projFrictPost[1][index] = joint.frictionLimiter.compMass1_linear.y;
+    data.projFrictPost[2][index] = joint.frictionLimiter.compMass1_angular;
+    data.projFrictPost[3][index] = joint.frictionLimiter.compMass2_linear.x;
+    data.projFrictPost[4][index] = joint.frictionLimiter.compMass2_linear.y;
+    data.projFrictPost[5][index] = joint.frictionLimiter.compMass2_angular;
 
-    float normFrict = std::sqrt(joint.frictionLimiter.compInvMass + eps);
-    data.projFrict[0][index] = joint.frictionLimiter.normalProjector1.x * invSqrtM1 * normFrict;
-    data.projFrict[1][index] = joint.frictionLimiter.normalProjector1.y * invSqrtM1 * normFrict;
-    data.projFrict[2][index] = joint.frictionLimiter.angularProjector1 * invSqrtI1 * normFrict;
-    data.projFrict[3][index] = joint.frictionLimiter.normalProjector2.x * invSqrtM2 * normFrict;
-    data.projFrict[4][index] = joint.frictionLimiter.normalProjector2.y * invSqrtM2 * normFrict;
-    data.projFrict[5][index] = joint.frictionLimiter.angularProjector2 * invSqrtI2 * normFrict;
+    data.dstVel[index] = joint.normalLimiter.dstVelocity * joint.normalLimiter.compInvMass;
 
-    data.dstVel[index] = joint.normalLimiter.dstVelocity * normMain;
-    data.frictCoeff[index] = 0.3f * normMain / normFrict;
+    data.impulseMain[index] = joint.normalLimiter.accumulatedImpulse;
+    data.impulseFrict[index] = joint.frictionLimiter.accumulatedImpulse;
 
-    data.impulseMain[index] = joint.normalLimiter.accumulatedImpulse / normMain;
-    data.impulseFrict[index] = joint.frictionLimiter.accumulatedImpulse / normFrict;
-
-    data.bodyData[0][index] = joint.body1->velocity.x / invSqrtM1;
-    data.bodyData[1][index] = joint.body1->velocity.y / invSqrtM1;
-    data.bodyData[2][index] = joint.body1->angularVelocity / invSqrtI1;
-    data.bodyData[3][index] = joint.body2->velocity.x / invSqrtM2;
-    data.bodyData[4][index] = joint.body2->velocity.y / invSqrtM2;
-    data.bodyData[5][index] = joint.body2->angularVelocity / invSqrtI2;
+    data.bodyData[0][index] = joint.body1->velocity.x;
+    data.bodyData[1][index] = joint.body1->velocity.y;
+    data.bodyData[2][index] = joint.body1->angularVelocity;
+    data.bodyData[3][index] = joint.body2->velocity.x;
+    data.bodyData[4][index] = joint.body2->velocity.y;
+    data.bodyData[5][index] = joint.body2->angularVelocity;
 
     data.next[0][index] = next0;
     data.next[1][index] = next1;
@@ -315,32 +305,15 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
 
 template<int vectorWidth> void ApplyJointData(ContactJoint &joint, const JointDataFriction<3, vectorWidth> &data, int index)
 {
-    float normMain = std::sqrt(joint.normalLimiter.compInvMass);
-    float normFrict = std::sqrt(joint.frictionLimiter.compInvMass);
-    joint.normalLimiter.accumulatedImpulse = data.impulseMain[index] * normMain;
-    joint.frictionLimiter.accumulatedImpulse = data.impulseFrict[index] * normFrict;
+    joint.normalLimiter.accumulatedImpulse = data.impulseMain[index];
+    joint.frictionLimiter.accumulatedImpulse = data.impulseFrict[index];
 }
 
 template<int vectorWidth> void ApplyBodyData(RigidBody *body, const float *data, const JointDataFriction<3, vectorWidth> *unused)
 {
-    float invSqrtM = std::sqrt(body->invMass), invSqrtI = std::sqrt(body->invInertia);
-    body->velocity.x = data[0 * vectorWidth] * invSqrtM;
-    body->velocity.y = data[1 * vectorWidth] * invSqrtM;
-    body->angularVelocity = data[2 * vectorWidth] * invSqrtI;
-}
-
-template<int vectorWidth> void ClearJointData(JointDataSimple<3, vectorWidth> &data, int index)
-{
-    data.proj[0][index] = data.proj[1][index] = data.proj[2][index] = 0;
-    data.proj[3][index] = data.proj[4][index] = data.proj[5][index] = 0;
-
-    data.dstVel[index] = data.impulse[index] = 0;
-
-    data.bodyData[0][index] = data.bodyData[1][index] = data.bodyData[2][index] = 0;
-    data.bodyData[3][index] = data.bodyData[4][index] = data.bodyData[5][index] = 0;
-
-    data.next[0][index] = data.BodyPtr(0, index);
-    data.next[1][index] = data.BodyPtr(1, index);
+    body->velocity.x = data[0 * vectorWidth];
+    body->velocity.y = data[1 * vectorWidth];
+    body->angularVelocity = data[2 * vectorWidth];
 }
 
 template<int vectorWidth> void FillJointData(const ContactJoint &joint,
@@ -353,26 +326,28 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
     assert(offs0 >= beg && offs0 < end);
     assert(offs1 >= beg && offs1 < end);
 
-    float invSqrtM1 = std::sqrt(joint.body1->invMass + eps), invSqrtM2 = std::sqrt(joint.body2->invMass + eps);
-    float invSqrtI1 = std::sqrt(joint.body1->invInertia + eps), invSqrtI2 = std::sqrt(joint.body2->invInertia + eps);
+    data.projPre[0][index] = joint.normalLimiter.normalProjector1.x * joint.normalLimiter.compInvMass;
+    data.projPre[1][index] = joint.normalLimiter.normalProjector1.y * joint.normalLimiter.compInvMass;
+    data.projPre[2][index] = joint.normalLimiter.angularProjector1 * joint.normalLimiter.compInvMass;
+    data.projPre[3][index] = joint.normalLimiter.normalProjector2.x * joint.normalLimiter.compInvMass;
+    data.projPre[4][index] = joint.normalLimiter.normalProjector2.y * joint.normalLimiter.compInvMass;
+    data.projPre[5][index] = joint.normalLimiter.angularProjector2 * joint.normalLimiter.compInvMass;
+    data.projPost[0][index] = joint.normalLimiter.compMass1_linear.x;
+    data.projPost[1][index] = joint.normalLimiter.compMass1_linear.y;
+    data.projPost[2][index] = joint.normalLimiter.compMass1_angular;
+    data.projPost[3][index] = joint.normalLimiter.compMass2_linear.x;
+    data.projPost[4][index] = joint.normalLimiter.compMass2_linear.y;
+    data.projPost[5][index] = joint.normalLimiter.compMass2_angular;
 
-    float norm = std::sqrt(joint.normalLimiter.compInvMass + eps);
-    data.proj[0][index] = joint.normalLimiter.normalProjector1.x * invSqrtM1 * norm;
-    data.proj[1][index] = joint.normalLimiter.normalProjector1.y * invSqrtM1 * norm;
-    data.proj[2][index] = joint.normalLimiter.angularProjector1 * invSqrtI1 * norm;
-    data.proj[3][index] = joint.normalLimiter.normalProjector2.x * invSqrtM2 * norm;
-    data.proj[4][index] = joint.normalLimiter.normalProjector2.y * invSqrtM2 * norm;
-    data.proj[5][index] = joint.normalLimiter.angularProjector2 * invSqrtI2 * norm;
+    data.dstVel[index] = joint.normalLimiter.dstDisplacingVelocity * joint.normalLimiter.compInvMass;
+    data.impulse[index] = joint.normalLimiter.accumulatedDisplacingImpulse;
 
-    data.dstVel[index] = joint.normalLimiter.dstDisplacingVelocity * norm;
-    data.impulse[index] = joint.normalLimiter.accumulatedDisplacingImpulse / norm;
-
-    data.bodyData[0][index] = joint.body1->displacingVelocity.x / invSqrtM1;
-    data.bodyData[1][index] = joint.body1->displacingVelocity.y / invSqrtM1;
-    data.bodyData[2][index] = joint.body1->displacingAngularVelocity / invSqrtI1;
-    data.bodyData[3][index] = joint.body2->displacingVelocity.x / invSqrtM2;
-    data.bodyData[4][index] = joint.body2->displacingVelocity.y / invSqrtM2;
-    data.bodyData[5][index] = joint.body2->displacingAngularVelocity / invSqrtI2;
+    data.bodyData[0][index] = joint.body1->displacingVelocity.x;
+    data.bodyData[1][index] = joint.body1->displacingVelocity.y;
+    data.bodyData[2][index] = joint.body1->displacingAngularVelocity;
+    data.bodyData[3][index] = joint.body2->displacingVelocity.x;
+    data.bodyData[4][index] = joint.body2->displacingVelocity.y;
+    data.bodyData[5][index] = joint.body2->displacingAngularVelocity;
 
     data.next[0][index] = next0;
     data.next[1][index] = next1;
@@ -380,26 +355,14 @@ template<int vectorWidth> void FillJointData(const ContactJoint &joint,
 
 template<int vectorWidth> void ApplyJointData(ContactJoint &joint, const JointDataSimple<3, vectorWidth> &data, int index)
 {
-    float invSqrtM1 = std::sqrt(joint.body1->invMass), invSqrtM2 = std::sqrt(joint.body2->invMass);
-    float invSqrtI1 = std::sqrt(joint.body1->invInertia), invSqrtI2 = std::sqrt(joint.body2->invInertia);
-
-    joint.body1->displacingVelocity.x = data.bodyData[0][index] * invSqrtM1;
-    joint.body1->displacingVelocity.y = data.bodyData[1][index] * invSqrtM1;
-    joint.body1->displacingAngularVelocity = data.bodyData[2][index] * invSqrtI1;
-    joint.body2->displacingVelocity.x = data.bodyData[3][index] * invSqrtM2;
-    joint.body2->displacingVelocity.y = data.bodyData[4][index] * invSqrtM2;
-    joint.body2->displacingAngularVelocity = data.bodyData[5][index] * invSqrtI2;
-
-    float norm = std::sqrt(joint.normalLimiter.compInvMass);
-    joint.normalLimiter.accumulatedDisplacingImpulse = data.impulse[index] * norm;
+    joint.normalLimiter.accumulatedDisplacingImpulse = data.impulse[index];
 }
 
 template<int vectorWidth> void ApplyBodyData(RigidBody *body, const float *data, const JointDataSimple<3, vectorWidth> *unused)
 {
-    float invSqrtM = std::sqrt(body->invMass), invSqrtI = std::sqrt(body->invInertia);
-    body->displacingVelocity.x = data[0 * vectorWidth] * invSqrtM;
-    body->displacingVelocity.y = data[1 * vectorWidth] * invSqrtM;
-    body->displacingAngularVelocity = data[2 * vectorWidth] * invSqrtI;
+    body->displacingVelocity.x = data[0 * vectorWidth];
+    body->displacingVelocity.y = data[1 * vectorWidth];
+    body->displacingAngularVelocity = data[2 * vectorWidth];
 }
 
 
@@ -412,19 +375,15 @@ float CheckSolveImpulse(ContactJoint &joint)
     data.Solve();
 
     float err = 0;
-    float invSqrtM1 = std::sqrt(joint.body1->invMass), invSqrtM2 = std::sqrt(joint.body2->invMass);
-    float invSqrtI1 = std::sqrt(joint.body1->invInertia), invSqrtI2 = std::sqrt(joint.body2->invInertia);
-    err += std::abs(joint.body1->velocity.x - data.bodyData[0][index] * invSqrtM1);
-    err += std::abs(joint.body1->velocity.y - data.bodyData[1][index] * invSqrtM1);
-    err += std::abs(joint.body1->angularVelocity - data.bodyData[2][index] * invSqrtI1);
-    err += std::abs(joint.body2->velocity.x - data.bodyData[3][index] * invSqrtM2);
-    err += std::abs(joint.body2->velocity.y - data.bodyData[4][index] * invSqrtM2);
-    err += std::abs(joint.body2->angularVelocity - data.bodyData[5][index] * invSqrtI2);
+    err += std::abs(joint.body1->velocity.x - data.bodyData[0][index]);
+    err += std::abs(joint.body1->velocity.y - data.bodyData[1][index]);
+    err += std::abs(joint.body1->angularVelocity - data.bodyData[2][index]);
+    err += std::abs(joint.body2->velocity.x - data.bodyData[3][index]);
+    err += std::abs(joint.body2->velocity.y - data.bodyData[4][index]);
+    err += std::abs(joint.body2->angularVelocity - data.bodyData[5][index]);
 
-    float normMain = std::sqrt(joint.normalLimiter.compInvMass);
-    float normFrict = std::sqrt(joint.frictionLimiter.compInvMass);
-    err += std::abs(joint.normalLimiter.accumulatedImpulse - data.impulseMain[index] * normMain);
-    err += std::abs(joint.frictionLimiter.accumulatedImpulse - data.impulseFrict[index] * normFrict);
+    err += std::abs(joint.normalLimiter.accumulatedImpulse - data.impulseMain[index]);
+    err += std::abs(joint.frictionLimiter.accumulatedImpulse - data.impulseFrict[index]);
 
     if(!(err < 1e-3))std::cout << "Error " << err << std::endl;
     return err;
@@ -439,17 +398,14 @@ float CheckSolveDisplacingImpulse(ContactJoint &joint)
     data.Solve();
 
     float err = 0;
-    float invSqrtM1 = std::sqrt(joint.body1->invMass), invSqrtM2 = std::sqrt(joint.body2->invMass);
-    float invSqrtI1 = std::sqrt(joint.body1->invInertia), invSqrtI2 = std::sqrt(joint.body2->invInertia);
-    err += std::abs(joint.body1->displacingVelocity.x - data.bodyData[0][index] * invSqrtM1);
-    err += std::abs(joint.body1->displacingVelocity.y - data.bodyData[1][index] * invSqrtM1);
-    err += std::abs(joint.body1->displacingAngularVelocity - data.bodyData[2][index] * invSqrtI1);
-    err += std::abs(joint.body2->displacingVelocity.x - data.bodyData[3][index] * invSqrtM2);
-    err += std::abs(joint.body2->displacingVelocity.y - data.bodyData[4][index] * invSqrtM2);
-    err += std::abs(joint.body2->displacingAngularVelocity - data.bodyData[5][index] * invSqrtI2);
+    err += std::abs(joint.body1->displacingVelocity.x - data.bodyData[0][index]);
+    err += std::abs(joint.body1->displacingVelocity.y - data.bodyData[1][index]);
+    err += std::abs(joint.body1->displacingAngularVelocity - data.bodyData[2][index]);
+    err += std::abs(joint.body2->displacingVelocity.x - data.bodyData[3][index]);
+    err += std::abs(joint.body2->displacingVelocity.y - data.bodyData[4][index]);
+    err += std::abs(joint.body2->displacingAngularVelocity - data.bodyData[5][index]);
 
-    float norm = std::sqrt(joint.normalLimiter.compInvMass);
-    err += std::abs(joint.normalLimiter.accumulatedDisplacingImpulse - data.impulse[index] * norm);
+    err += std::abs(joint.normalLimiter.accumulatedDisplacingImpulse - data.impulse[index]);
 
     if(!(err < 1e-3))std::cout << "Error " << err << std::endl;
     return err;
