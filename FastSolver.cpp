@@ -456,6 +456,7 @@ template<int log2width> struct JointSorter
             if(nWaiting >= queue.size())queue.resize(nWaiting + 1);
             queue[nWaiting++] = index;  return false;
         }
+        assert(jointData[index].index < 0);
         *body1.prev = body1.last = current | 0;
         body1.prev = &jointData[index].next[0];
         *body2.prev = body2.last = current | 1;
@@ -468,12 +469,12 @@ template<int log2width> struct JointSorter
     {
         int n = nWaiting, i = 0;  nWaiting = 0;
         while(i < n)
-            if(Append(joints[queue[i]], queue[i]))
-            {
-                while(i < n)queue[nWaiting++] = queue[i++];
-                n = nWaiting;  i = nWaiting = 0;
-            }
-            else i++;
+        {
+            int index = queue[i++];
+            if(!Append(joints[index], index))continue;
+            while(i < n)queue[nWaiting++] = queue[i++];
+            n = nWaiting;  i = nWaiting = 0;
+        }
     }
 
     JointSorter(ContactJoint *joints_, int nJoints) : joints(joints_), jointData(nJoints), nWaiting(0), current(0)
@@ -489,6 +490,24 @@ template<int log2width> struct JointSorter
         }
         for(auto &body : bodyData)*body.second.prev = body.second.first;
         assert(!(current & mask2));  current >>= 1;
+
+        /*
+        std::vector<int> ref(current, -1);
+        for(int i = 0; i < nJoints; i++)ref[jointData[i].index] = i;
+        for(auto &body : bodyData)
+        {
+            int index = body.second.first;
+            for(;;)
+            {
+                assert(unsigned(index) < 2 * current);
+                int old = index, joint = ref[index >> 1];  assert(unsigned(joint) < nJoints);
+                assert((index & 1 ? joints[joint].body2 : joints[joint].body1) == body.first);
+                index = jointData[joint].next[index & 1];  if(old == body.second.last)break;
+                assert(unsigned(index >> 1) < current && unsigned(ref[index >> 1]) < nJoints);
+            }
+            assert(index == body.second.first);
+        }
+        */
     }
 
     int Size() const
